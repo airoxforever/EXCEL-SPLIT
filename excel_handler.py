@@ -469,7 +469,7 @@ class ExcelProcessor:
 
     def create_bilingual_file(self, source_lang, target_lang):
         """
-        Create a bilingual Excel file with preserved formatting
+        Create a bilingual Excel file by copying and modifying the source workbook
         """
         try:
             if not self.wb:
@@ -486,29 +486,34 @@ class ExcelProcessor:
             if not source_col or not target_col:
                 raise ValueError(f"Could not find columns for {source_lang} and/or {target_lang}")
 
-            # Create new workbook
+            # Create a copy of the source workbook
             new_wb = Workbook()
             new_ws = new_wb.active
+
+            # Copy worksheet properties from source
+            ws = self.wb.active
+            new_ws.sheet_format = copy(ws.sheet_format)
+            new_ws.sheet_properties = copy(ws.sheet_properties)
             
-            # Copy column widths with proper dimension handling
+            # Copy column widths
             new_ws.column_dimensions['A'].width = source_col['width'] if source_col['width'] else 10.0
             new_ws.column_dimensions['B'].width = target_col['width'] if target_col['width'] else 10.0
 
-            # Set headers with proper cell styles
-            header_style = self.create_header_style()
+            # Set headers with original styles if available
+            source_header = ws.cell(row=col_info['header_row'], column=source_col['index'])
+            target_header = ws.cell(row=col_info['header_row'], column=target_col['index'])
             
             header_a = new_ws['A1']
             header_b = new_ws['B1']
             
-            # Use original column headers
+            # Copy header values and styles
             header_a.value = source_col['header']
             header_b.value = target_col['header']
             
-            header_a.style = header_style
-            header_b.style = header_style
+            self.copy_cell_format(source_header, header_a)
+            self.copy_cell_format(target_header, header_b)
 
             # Copy content and formatting
-            ws = self.wb.active
             row_offset = col_info['header_row']
             new_row = 2  # Start after header
 
@@ -523,16 +528,21 @@ class ExcelProcessor:
                 new_source = new_ws.cell(row=new_row, column=1)
                 new_target = new_ws.cell(row=new_row, column=2)
                 
-                # Handle cell values properly
-                new_source.value = str(source_cell.value) if source_cell.value is not None else ""
-                new_target.value = str(target_cell.value) if target_cell.value is not None else ""
+                # Preserve original values without conversion when possible
+                new_source.value = source_cell.value
+                new_target.value = target_cell.value
                 
+                # Copy all formatting
                 self.copy_cell_format(source_cell, new_source)
                 self.copy_cell_format(target_cell, new_target)
                 
                 new_row += 1
 
-            # Ensure proper workbook properties
+            # Copy workbook properties
+            if hasattr(self.wb, 'properties'):
+                new_wb.properties = copy(self.wb.properties)
+            
+            # Ensure core properties are set
             new_wb.properties.creator = "Excel File Splitter"
             new_wb.properties.created = datetime.now()
             new_wb.properties.modified = datetime.now()
