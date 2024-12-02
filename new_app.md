@@ -2,112 +2,257 @@
 
 A Streamlit application for splitting multilingual Excel files into bilingual pairs and merging them back after translation.
 
-## Core Functionality
+## Implementation Plan
 
-### 1. Split Operation
-- Input: Multilingual Excel file
-- Process: Creates bilingual Excel files (source + target pairs)
-- Output: Multiple bilingual Excel files named by language codes
-- Example: `en-DE.xlsx` contains English in column A, German in column B
+### Phase 1: Core Infrastructure Setup
+1. **Project Structure**
+   - Reuse and adapt existing:
+     - `excel_handler.py` for Excel operations
+     - `config.py` for language mappings
+     - `utils/logging_config.py` for logging
+   - Create new components:
+     - `splitter.py` for file splitting logic
+     - `merger.py` for file merging logic
+     - `validators.py` for input validation
 
-### 2. Merge Operation
-- Input: 
-  - Original multilingual Excel file
-  - ZIP file containing translated bilingual Excel files
-- Process: Updates original file with translations from bilingual files
-- Output: Updated multilingual Excel file
-- Safety: Creates backup copy of original file
+2. **Dependencies Management**
+   - Existing dependencies from requirements.txt
+   - Additional needs:
+     - `zipfile` for archive handling
+     - `pathlib` for path operations
 
-## Technical Requirements
+### Phase 2: Excel Processing Implementation
+1. **Excel Handler Enhancement**
+   - Add methods for:
+     - Column identification by language
+     - Bilingual pair extraction
+     - Format preservation
+   - Implement validation for:
+     - File structure
+     - Language codes
+     - Column consistency
 
-### Dependencies
-```
-streamlit
-pandas
-openpyxl
-zipfile
-pathlib
-```
-
-### File Structure
-```
-project/
-├── app.py              # Main Streamlit application
-├── excel_handler.py    # Excel processing logic
-├── config.py          # Configuration and language mappings
-├── utils/
-│   └── logging_config.py
-└── temp/              # Temporary file processing (auto-cleaned)
-```
-
-### Reusable Components
-From existing project:
-1. `excel_handler.py`:
-   - Language detection
-   - Excel reading/writing
-   - Basic file operations
-2. `config.py`:
-   - Language mappings
-   - Configuration settings
-3. `utils/logging_config.py`:
-   - Logging setup
+2. **Split Operation Logic**
+   - Source language detection
+   - Target language identification
+   - Bilingual file creation
+   - Format preservation
+   - Progress tracking
    - Error handling
 
-## Processing Flow
+3. **Merge Operation Logic**
+   - Original file backup
+   - Translation file validation
+   - Language pair matching
+   - Content merging
+   - Format preservation
+   - Error recovery
 
-### Split Operation
-1. User uploads multilingual Excel file
-2. System:
-   - Detects language columns
-   - Identifies source language
-   - Shows preview for user confirmation
-3. After confirmation:
-   - Creates bilingual Excel files
-   - Names files using language codes
-   - Offers ZIP download of all files
+### Phase 3: User Interface Development
+1. **Split Tab**
+   - File upload component
+   - Language selection
+   - Preview functionality
+   - Progress indication
+   - Download handling
 
-### Merge Operation
-1. User uploads:
-   - Original multilingual Excel file
-   - ZIP file with translated files
-2. System:
-   - Creates backup of original file
-   - Extracts ZIP to temporary folder
-   - Matches files by language codes
-   - Updates translations in original file
-3. Offers download of updated file
+2. **Merge Tab**
+   - Original file upload
+   - ZIP file handling
+   - Progress tracking
+   - Result preview
+   - Download options
 
-## Security Considerations
+### Phase 4: Security & Error Handling
+1. **File Processing Security**
+   - Temporary file management
+   - Secure file naming
+   - Path validation
+   - Permission handling
 
-### File Handling
-- All files processed in temporary directory
-- Immediate cleanup after processing
-- No permanent storage of uploaded files
-- Secure file naming and handling
+2. **Error Management**
+   - Input validation
+   - Process monitoring
+   - Error recovery
+   - User feedback
 
-### Error Handling
-- Validation of file formats
-- Language code verification
-- Structural integrity checks
-- Detailed error messages
+### Phase 5: Testing & Optimization
+1. **Testing Strategy**
+   - Unit tests for core functions
+   - Integration tests
+   - UI testing
+   - Error scenario testing
 
-## User Interface
+2. **Performance Optimization**
+   - Large file handling
+   - Memory management
+   - Processing speed
+   - UI responsiveness
 
-### Split Tab
-- File upload area
-- Language detection preview
-- Source language confirmation
-- Processing status
-- Download button for ZIP
+## Technical Implementation Details
 
-### Merge Tab
-- Original file upload
-- ZIP file upload
-- Processing status
-- Download button for updated file
+### File Processing Flow
+1. **Split Operation**
+```python
+def split_excel(input_file):
+    # 1. Validate input file
+    # 2. Detect languages
+    # 3. Create bilingual pairs
+    # 4. Generate output files
+    # 5. Create ZIP archive
+```
+
+2. **Merge Operation**
+```python
+def merge_excel(original_file, translations_zip):
+    # 1. Backup original
+    # 2. Extract translations
+    # 3. Validate files
+    # 4. Update content
+    # 5. Generate output
+```
+
+### Key Components Interaction
+```
+User Interface (Streamlit)
+    ↓
+Input Validation
+    ↓
+Excel Processing
+    ↓
+Language Handling
+    ↓
+File Operations
+    ↓
+Output Generation
+```
+
+### Data Flow
+1. **Split Process**
+   - Input: Multilingual Excel
+   - Processing: Language detection → Pair creation → Format preservation
+   - Output: Multiple bilingual Excel files
+
+2. **Merge Process**
+   - Input: Original Excel + Translation ZIP
+   - Processing: Validation → Content merging → Format updating
+   - Output: Updated multilingual Excel
+
+## Implementation Timeline
+
+### Week 1
+- Project setup
+- Core infrastructure
+- Basic Excel handling
+
+### Week 2
+- Split functionality
+- Merge functionality
+- Basic UI
+
+### Week 3
+- Error handling
+- Security features
+- Testing
+
+### Week 4
+- UI refinement
+- Performance optimization
+- Documentation
 
 ## Future Enhancements
-- Support for monolingual files
-- Custom column mapping
-- Advanced error recovery
-- Batch processing
+1. **Advanced Features**
+   - Custom column mapping
+   - Batch processing
+   - Format templates
+   - Translation memory
+
+2. **UI Improvements**
+   - Dark mode
+   - Progress visualization
+   - File preview
+   - Settings panel
+
+3. **Integration Options**
+   - Cloud storage
+   - Translation APIs
+   - Version control
+   - Collaboration features
+
+## Streamlit Cloud Deployment Considerations
+
+### Security & Privacy
+1. **Temporary File Handling**
+   - Use `tempfile` for all file operations
+   - Immediate cleanup after processing
+   - No persistent storage
+   - Memory-only processing where possible
+
+2. **Data Privacy**
+   - All processing done in memory
+   - No data stored on server
+   - Clear session state after operations
+   - Implement auto-cleanup routines
+
+### Deployment Requirements
+1. **Repository Structure**
+   ```
+   .
+   ├── .streamlit/
+   │   └── config.toml    # Streamlit configuration
+   ├── requirements.txt   # Dependencies
+   ├── app.py            # Main application
+   ├── README.md         # Documentation
+   └── [other files...]
+   ```
+
+2. **Environment Setup**
+   - No environment variables needed
+   - All configurations in code
+   - No external service dependencies
+   - Minimal package requirements
+
+3. **Resource Management**
+   - Memory-efficient processing
+   - Chunk processing for large files
+   - Session state cleanup
+   - Cache management
+
+### Performance Optimization
+1. **Memory Usage**
+   - Stream processing for large files
+   - Efficient data structures
+   - Regular garbage collection
+   - Cache clearing
+
+2. **Processing Speed**
+   - Async operations where possible
+   - Progress indicators
+   - Batch processing optimization
+   - Efficient algorithms
+
+### User Experience
+1. **Clear Instructions**
+   - File size limits
+   - Supported formats
+   - Processing time estimates
+   - Privacy guarantees
+
+2. **Error Handling**
+   - Friendly error messages
+   - Recovery suggestions
+   - Process cancellation
+   - Session recovery
+
+### Monitoring
+1. **Application Health**
+   - Basic analytics
+   - Error logging
+   - Performance metrics
+   - Usage patterns
+
+2. **User Feedback**
+   - Success/failure rates
+   - Processing times
+   - Feature usage
+   - Error reports
