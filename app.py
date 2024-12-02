@@ -73,13 +73,20 @@ def merge_translations(original_df, translations_dict):
 def main():
     st.title("Excel File Splitter & Merger")
     
-    # Add privacy notice
-    with st.expander("📋 Privacy & Security Information"):
-        st.info(
-            "This application processes all files in-memory and does not store any data. "
-            "Files are automatically deleted after processing. "
-            "All operations are performed locally in your browser session."
-        )
+    # Add detailed app description
+    st.markdown("""
+    ### 📚 About This App
+    This application helps you manage multilingual Excel files by:
+    1. **Splitting** a multilingual Excel file into separate bilingual files for translation
+    2. **Merging** the translated files back into the original format
+    
+    All formatting from the original file is preserved throughout the process.
+    
+    ### 🔒 Privacy & Security
+    - All files are processed locally in your browser
+    - No data is stored or transmitted anywhere
+    - Files are automatically deleted after processing
+    """)
     
     # Create tabs
     tab1, tab2 = st.tabs(["Split Excel", "Merge Translations"])
@@ -87,6 +94,13 @@ def main():
     # Split Excel Tab
     with tab1:
         st.header("Split Multilingual Excel")
+        st.markdown("""
+        ### 📝 How it works:
+        1. Upload your multilingual Excel file
+        2. The app will automatically detect language columns
+        3. Verify the detected languages and source column
+        4. Generate bilingual files for translation
+        """)
         
         uploaded_file = st.file_uploader(
             "Upload your multilingual Excel file",
@@ -97,43 +111,94 @@ def main():
         if uploaded_file:
             try:
                 excel_processor = ExcelProcessor(uploaded_file)
-                df = excel_processor.read_excel()
                 
-                available_languages = excel_processor.get_available_languages()
+                # Preserve original formatting
+                if not excel_processor.preserve_workbook_format(uploaded_file):
+                    st.error("Failed to preserve original file formatting")
+                    return
                 
-                if available_languages:
-                    st.success(f"Found {len(available_languages)} languages in the file!")
+                # Get column information
+                col_info = excel_processor.get_column_info()
+                
+                if col_info:
+                    st.success(f"✅ Found language columns in row {col_info['header_row']}")
+                    
+                    # Display and allow correction of source column
+                    source_col = col_info['source_column']
+                    if source_col:
+                        st.info(f"📌 Source language column detected: {source_col['header']} (Column {source_col['letter']})")
+                    else:
+                        st.warning("⚠️ Source language column (English GB) not automatically detected")
+                    
+                    # Allow manual source column selection
+                    col_options = {f"{info['header']} (Column {info['letter']})": code 
+                                 for code, info in col_info['columns'].items()}
+                    
+                    selected_source = st.selectbox(
+                        "Verify or select source language column:",
+                        options=list(col_options.keys()),
+                        index=list(col_options.keys()).index(f"{source_col['header']} (Column {source_col['letter']})") if source_col else 0
+                    )
+                    
+                    # Show available target languages
+                    st.subheader("Target Languages")
+                    available_languages = [
+                        f"{info['language_name']} ({info['header']})"
+                        for code, info in col_info['columns'].items()
+                        if code != col_options[selected_source]
+                    ]
                     
                     selected_languages = st.multiselect(
-                        "Select target languages for splitting",
-                        options=[SUPPORTED_LANGUAGES[lang] for lang in available_languages if lang != SOURCE_LANGUAGE],
-                        default=[SUPPORTED_LANGUAGES[lang] for lang in available_languages if lang != SOURCE_LANGUAGE]
+                        "Select target languages for splitting:",
+                        options=available_languages,
+                        default=available_languages
                     )
                     
                     if selected_languages and st.button("Generate Bilingual Files"):
                         try:
-                            zip_buffer = io.BytesIO()
-                            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                                for lang_name in selected_languages:
-                                    lang_code = next(code for code, name in SUPPORTED_LANGUAGES.items() if name == lang_name)
-                                    excel_content = create_bilingual_excel(df, SOURCE_LANGUAGE, lang_code)
-                                    filename = f"{SOURCE_LANGUAGE}-{lang_code}.xlsx"
-                                    zf.writestr(filename, excel_content)
+                            source_lang = col_options[selected_source]
                             
+                            with st.spinner("Generating bilingual files..."):
+                                zip_buffer = io.BytesIO()
+                                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                                    for lang_display in selected_languages:
+                                        # Extract language code from display name
+                                        target_lang = next(
+                                            code for code, info in col_info['columns'].items()
+                                            if f"{info['language_name']} ({info['header']})" == lang_display
+                                        )
+                                        
+                                        # Create bilingual file with preserved formatting
+                                        new_wb = excel_processor.create_bilingual_file(source_lang, target_lang)
+                                        
+                                        # Save to zip
+                                        excel_buffer = io.BytesIO()
+                                        new_wb.save(excel_buffer)
+                                        filename = f"{source_lang}-{target_lang}.xlsx"
+                                        zf.writestr(filename, excel_buffer.getvalue())
+                                
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             st.download_button(
-                                label="Download Bilingual Files (ZIP)",
+                                label="📥 Download Bilingual Files (ZIP)",
                                 data=zip_buffer.getvalue(),
                                 file_name=f"bilingual_files_{timestamp}.zip",
                                 mime="application/zip"
                             )
                             
+                            st.success("✅ Bilingual files generated successfully!")
+                            
                         except Exception as e:
                             st.error(f"Error generating files: {str(e)}")
                             logger.error(f"File generation error: {e}", exc_info=True)
                 else:
-                    st.warning("No supported languages found in the file!")
+                    st.error("""
+                    ❌ Could not detect language columns in the file.
                     
+                    Please ensure:
+                    1. The file contains language codes (e.g., ENGB, FRFR) in the column headers
+                    2. The language codes are within the first 10 rows of the file
+                    3. The file follows the expected format
+                    """)
             except Exception as e:
                 st.error(f"Error processing file: {str(e)}")
                 logger.error(f"File processing error: {e}", exc_info=True)
@@ -178,42 +243,54 @@ def main():
                                 translations_dict[target_lang] = translation_df
                 
                 if translations_dict:
-                    # Merge translations
-                    result_df = merge_translations(original_df, translations_dict)
-                    
-                    # Save merged file
-                    output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        result_df.to_excel(writer, index=False)
-                    
-                    # Offer download
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    st.download_button(
-                        label="Download Merged Excel File",
-                        data=output.getvalue(),
-                        file_name=f"merged_translations_{timestamp}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                    
-                    # Show preview
-                    st.subheader("Preview of Merged File")
-                    st.dataframe(result_df.head())
-                    
+                    try:
+                        # Initialize Excel processor with original file
+                        excel_processor = ExcelProcessor(original_file)
+                        
+                        # Preserve original formatting
+                        if not excel_processor.preserve_workbook_format(original_file):
+                            st.error("Failed to preserve original file formatting")
+                            return
+                        
+                        # Apply translations while preserving formatting
+                        if not excel_processor.apply_translations_to_workbook(translations_dict):
+                            st.error("Failed to apply translations")
+                            return
+                        
+                        # Save to bytes buffer
+                        output = io.BytesIO()
+                        excel_processor.save_workbook(output)
+                        
+                        # Offer download
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        st.download_button(
+                            label="📥 Download Merged Excel File",
+                            data=output.getvalue(),
+                            file_name=f"merged_translations_{timestamp}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        
+                        # Show preview
+                        st.subheader("Preview of Merged File")
+                        preview_df = pd.read_excel(output)
+                        st.dataframe(preview_df.head())
+                        
+                        st.success("✅ Translations merged successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"Error merging translations: {str(e)}")
+                        logger.error(f"Translation merge error: {e}", exc_info=True)
                 else:
                     st.warning("No translation files found in the ZIP!")
-                    
             except Exception as e:
-                st.error(f"Error merging translations: {str(e)}")
-                logger.error(f"Translation merge error: {e}", exc_info=True)
-    
-    # Cleanup on session end
-    cleanup_temp_files()
+                st.error(f"Error processing files: {str(e)}")
+                logger.error(f"File processing error: {e}", exc_info=True)
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        logger.error("Application error", exc_info=True)
+        st.error(f"Application error: {str(e)}")
+        logger.error(f"Application error: {e}", exc_info=True)
     finally:
         cleanup_temp_files()

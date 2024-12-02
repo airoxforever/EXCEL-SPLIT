@@ -12,6 +12,8 @@ from datetime import datetime
 import re
 import shutil
 from openpyxl.styles import Color
+from copy import copy
+from openpyxl import Workbook
 
 # Set up logging to a file in a logs subdirectory
 log_dir = Path("logs")
@@ -269,3 +271,290 @@ class ExcelProcessor:
     def get_available_languages(self):
         """Get list of available languages in the Excel file"""
         return self.detect_languages()
+
+    def preserve_workbook_format(self, original_file):
+        """
+        Load and preserve the original workbook format including column widths
+        """
+        temp_file = None
+        try:
+            if isinstance(original_file, (str, Path)):
+                self.wb = load_workbook(original_file)
+            else:
+                # Create temporary file for file object
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+                original_file.seek(0)
+                temp_file.write(original_file.read())
+                temp_file.close()  # Close the temp file before loading
+                self.wb = load_workbook(temp_file.name)
+                # Close workbook after loading
+                self.wb.close()
+                # Reopen workbook
+                self.wb = load_workbook(temp_file.name)
+            
+            self.ws = self.wb.active
+            # Store column dimensions
+            self.column_dimensions = {col: self.ws.column_dimensions[col].width 
+                                   for col in self.ws.column_dimensions}
+            logger.info("Preserved original workbook formatting")
+            return True
+        except Exception as e:
+            logger.error(f"Error preserving workbook format: {str(e)}", exc_info=True)
+            return False
+        finally:
+            # Clean up temp file if it exists
+            if temp_file:
+                try:
+                    if self.wb:
+                        self.wb.close()
+                    os.unlink(temp_file.name)
+                except Exception as e:
+                    logger.warning(f"Could not delete temporary file {temp_file.name}: {e}")
+
+    def apply_translations_to_workbook(self, translations_dict):
+        """
+        Apply translations to the original workbook while preserving formatting
+        """
+        try:
+            if not self.wb:
+                raise ValueError("No workbook loaded. Call preserve_workbook_format first.")
+
+            ws = self.wb.active
+            
+            # Find header row (usually row 1)
+            header_row = 1
+            
+            # Create column mapping
+            column_mapping = {}
+            for col in range(1, ws.max_column + 1):
+                cell = ws.cell(row=header_row, column=col)
+                if cell.value:
+                    for lang_code in translations_dict.keys():
+                        if lang_code in str(cell.value):
+                            column_mapping[lang_code] = col
+            
+            # Find start row for translations (skip header)
+            start_row = header_row + 1
+            
+            # Apply translations while preserving formatting
+            for lang_code, translation_df in translations_dict.items():
+                if lang_code in column_mapping:
+                    col_idx = column_mapping[lang_code]
+                    
+                    for idx, translation in enumerate(translation_df['Target'].values, start=start_row):
+                        # Only update if there's actual content
+                        if pd.notna(translation):
+                            cell = ws.cell(row=idx, column=col_idx)
+                            cell.value = translation
+            
+            # Ensure column widths are preserved
+            for col, width in self.column_dimensions.items():
+                if width is not None:
+                    ws.column_dimensions[col].width = width
+            
+            logger.info("Successfully applied translations while preserving formatting")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error applying translations: {str(e)}", exc_info=True)
+            return False
+
+    def save_workbook(self, output_path):
+        """
+        Save the workbook while preserving all formatting
+        """
+        try:
+            if not self.wb:
+                raise ValueError("No workbook loaded")
+            
+            self.wb.save(output_path)
+            logger.info(f"Saved formatted workbook to {output_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving workbook: {str(e)}", exc_info=True)
+            return False
+
+    def detect_header_row(self):
+        """
+        Scan the Excel file to find the row containing language codes
+        Returns the header row number (1-based) or None if not found
+        """
+        try:
+            ws = self.wb.active
+            max_rows_to_scan = min(10, ws.max_row)  # Scan first 10 rows or less
+            
+            for row_num in range(1, max_rows_to_scan + 1):
+                language_found = False
+                for cell in ws[row_num]:
+                    cell_value = str(cell.value or '').lower()
+                    # Look for language codes in the cell value
+                    for lang_code in SUPPORTED_LANGUAGES.keys():
+                        if lang_code.lower() in cell_value:
+                            language_found = True
+                            break
+                    if language_found:
+                        return row_num
+            return None
+        except Exception as e:
+            logger.error(f"Error detecting header row: {e}")
+            return None
+
+    def get_column_info(self):
+        """
+        Get detailed information about language columns
+        Returns a dict with column information including indexes and headers
+        """
+        try:
+            if not self.wb:
+                raise ValueError("Workbook not loaded")
+
+            ws = self.wb.active
+            header_row = self.detect_header_row()
+            if not header_row:
+                return None
+
+            columns_info = {
+                'header_row': header_row,
+                'columns': {},
+                'source_column': None
+            }
+
+            # Scan header row for language columns
+            for col in range(1, ws.max_column + 1):
+                cell = ws.cell(row=header_row, column=col)
+                cell_value = str(cell.value or '').lower()
+                
+                # Check for language codes
+                for lang_code, lang_name in SUPPORTED_LANGUAGES.items():
+                    if lang_code.lower() in cell_value:
+                        col_info = {
+                            'index': col,
+                            'header': cell.value,
+                            'letter': get_column_letter(col),
+                            'width': ws.column_dimensions[get_column_letter(col)].width,
+                            'language_code': lang_code,
+                            'language_name': lang_name
+                        }
+                        columns_info['columns'][lang_code] = col_info
+                        
+                        # Mark as source if it's English GB
+                        if lang_code == SOURCE_LANGUAGE:
+                            columns_info['source_column'] = col_info
+
+            return columns_info
+        except Exception as e:
+            logger.error(f"Error getting column info: {e}")
+            return None
+
+    def copy_cell_format(self, source_cell, target_cell):
+        """
+        Copy all formatting from source cell to target cell with proper handling
+        """
+        if source_cell.has_style:
+            try:
+                if source_cell.font:
+                    target_cell.font = copy(source_cell.font)
+                if source_cell.border:
+                    target_cell.border = copy(source_cell.border)
+                if source_cell.fill:
+                    target_cell.fill = copy(source_cell.fill)
+                if source_cell.number_format:
+                    target_cell.number_format = source_cell.number_format
+                if source_cell.protection:
+                    target_cell.protection = copy(source_cell.protection)
+                if source_cell.alignment:
+                    target_cell.alignment = copy(source_cell.alignment)
+            except Exception as e:
+                logger.warning(f"Could not copy some cell formatting: {e}")
+
+    def create_bilingual_file(self, source_lang, target_lang):
+        """
+        Create a bilingual Excel file with preserved formatting
+        """
+        try:
+            if not self.wb:
+                raise ValueError("Workbook not loaded")
+
+            # Get column information
+            col_info = self.get_column_info()
+            if not col_info:
+                raise ValueError("Could not detect language columns")
+
+            source_col = col_info['columns'].get(source_lang)
+            target_col = col_info['columns'].get(target_lang)
+            
+            if not source_col or not target_col:
+                raise ValueError(f"Could not find columns for {source_lang} and/or {target_lang}")
+
+            # Create new workbook
+            new_wb = Workbook()
+            new_ws = new_wb.active
+            
+            # Copy column widths with proper dimension handling
+            new_ws.column_dimensions['A'].width = source_col['width'] if source_col['width'] else 10.0
+            new_ws.column_dimensions['B'].width = target_col['width'] if target_col['width'] else 10.0
+
+            # Set headers with proper cell styles
+            header_style = self.create_header_style()
+            
+            header_a = new_ws['A1']
+            header_b = new_ws['B1']
+            
+            # Use original column headers
+            header_a.value = source_col['header']
+            header_b.value = target_col['header']
+            
+            header_a.style = header_style
+            header_b.style = header_style
+
+            # Copy content and formatting
+            ws = self.wb.active
+            row_offset = col_info['header_row']
+            new_row = 2  # Start after header
+
+            for row in range(row_offset + 1, ws.max_row + 1):
+                source_cell = ws.cell(row=row, column=source_col['index'])
+                target_cell = ws.cell(row=row, column=target_col['index'])
+                
+                if source_cell.value is None and target_cell.value is None:
+                    continue  # Skip completely empty rows
+                
+                # Copy values and formatting
+                new_source = new_ws.cell(row=new_row, column=1)
+                new_target = new_ws.cell(row=new_row, column=2)
+                
+                # Handle cell values properly
+                new_source.value = str(source_cell.value) if source_cell.value is not None else ""
+                new_target.value = str(target_cell.value) if target_cell.value is not None else ""
+                
+                self.copy_cell_format(source_cell, new_source)
+                self.copy_cell_format(target_cell, new_target)
+                
+                new_row += 1
+
+            # Ensure proper workbook properties
+            new_wb.properties.creator = "Excel File Splitter"
+            new_wb.properties.created = datetime.now()
+            new_wb.properties.modified = datetime.now()
+
+            return new_wb
+        except Exception as e:
+            logger.error(f"Error creating bilingual file: {e}")
+            raise
+
+    def create_header_style(self):
+        """Create a proper style for headers"""
+        from openpyxl.styles import NamedStyle, Font, PatternFill, Border, Side, Alignment
+        
+        header_style = NamedStyle(name='header_style')
+        header_style.font = Font(bold=True, size=11)
+        header_style.fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+        header_style.border = Border(
+            bottom=Side(style='thin'),
+            top=Side(style='thin'),
+            left=Side(style='thin'),
+            right=Side(style='thin')
+        )
+        header_style.alignment = Alignment(horizontal='center', vertical='center')
+        
+        return header_style
