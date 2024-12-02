@@ -39,25 +39,35 @@ def cleanup_temp_files():
 def create_bilingual_excel(df, source_lang, target_lang):
     """Create a bilingual Excel file in memory"""
     try:
-        # Create in-memory Excel file
         output = io.BytesIO()
-        
-        # Select only the required columns
         source_col = next(col for col in df.columns if source_lang in col)
         target_col = next(col for col in df.columns if target_lang in col)
         
-        # Create new dataframe with just source and target columns
         bilingual_df = pd.DataFrame({
             'Source': df[source_col],
             'Target': df[target_col]
         })
         
-        # Save to in-memory buffer
         bilingual_df.to_excel(output, index=False)
         return output.getvalue()
-        
     except Exception as e:
         logger.error(f"Error creating bilingual Excel: {e}")
+        raise
+
+def merge_translations(original_df, translations_dict):
+    """Merge translations back into the original dataframe"""
+    try:
+        result_df = original_df.copy()
+        
+        for lang_code, translation_df in translations_dict.items():
+            # Find the target column in the original dataframe
+            target_col = next(col for col in result_df.columns if lang_code in col)
+            # Update the column with translations
+            result_df[target_col] = translation_df['Target'].values
+            
+        return result_df
+    except Exception as e:
+        logger.error(f"Error merging translations: {e}")
         raise
 
 def main():
@@ -86,17 +96,14 @@ def main():
         
         if uploaded_file:
             try:
-                # Process the uploaded file
                 excel_processor = ExcelProcessor(uploaded_file)
                 df = excel_processor.read_excel()
                 
-                # Get available languages
                 available_languages = excel_processor.get_available_languages()
                 
                 if available_languages:
                     st.success(f"Found {len(available_languages)} languages in the file!")
                     
-                    # Language selection
                     selected_languages = st.multiselect(
                         "Select target languages for splitting",
                         options=[SUPPORTED_LANGUAGES[lang] for lang in available_languages if lang != SOURCE_LANGUAGE],
@@ -105,22 +112,14 @@ def main():
                     
                     if selected_languages and st.button("Generate Bilingual Files"):
                         try:
-                            # Create ZIP file in memory
                             zip_buffer = io.BytesIO()
                             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-                                # Process each selected language
                                 for lang_name in selected_languages:
-                                    # Get language code from name
                                     lang_code = next(code for code, name in SUPPORTED_LANGUAGES.items() if name == lang_name)
-                                    
-                                    # Create bilingual Excel
                                     excel_content = create_bilingual_excel(df, SOURCE_LANGUAGE, lang_code)
-                                    
-                                    # Add to ZIP
                                     filename = f"{SOURCE_LANGUAGE}-{lang_code}.xlsx"
                                     zf.writestr(filename, excel_content)
                             
-                            # Offer ZIP download
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                             st.download_button(
                                 label="Download Bilingual Files (ZIP)",
@@ -142,8 +141,70 @@ def main():
     # Merge Translations Tab
     with tab2:
         st.header("Merge Translations")
-        st.info("🚧 Merge functionality coming soon!")
-        # We'll implement this in the next step
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            original_file = st.file_uploader(
+                "Upload original multilingual Excel file",
+                type=['xlsx', 'xls'],
+                key="merge_original_uploader"
+            )
+        
+        with col2:
+            translations_zip = st.file_uploader(
+                "Upload ZIP file with translations",
+                type=['zip'],
+                key="merge_translations_uploader"
+            )
+        
+        if original_file and translations_zip:
+            try:
+                # Process original file
+                excel_processor = ExcelProcessor(original_file)
+                original_df = excel_processor.read_excel()
+                
+                # Process translations
+                translations_dict = {}
+                with zipfile.ZipFile(translations_zip) as zf:
+                    for filename in zf.namelist():
+                        if filename.endswith('.xlsx'):
+                            # Extract language code from filename
+                            target_lang = filename.split('-')[1].split('.')[0]
+                            
+                            # Read translation file
+                            with zf.open(filename) as f:
+                                translation_df = pd.read_excel(f)
+                                translations_dict[target_lang] = translation_df
+                
+                if translations_dict:
+                    # Merge translations
+                    result_df = merge_translations(original_df, translations_dict)
+                    
+                    # Save merged file
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        result_df.to_excel(writer, index=False)
+                    
+                    # Offer download
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    st.download_button(
+                        label="Download Merged Excel File",
+                        data=output.getvalue(),
+                        file_name=f"merged_translations_{timestamp}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    
+                    # Show preview
+                    st.subheader("Preview of Merged File")
+                    st.dataframe(result_df.head())
+                    
+                else:
+                    st.warning("No translation files found in the ZIP!")
+                    
+            except Exception as e:
+                st.error(f"Error merging translations: {str(e)}")
+                logger.error(f"Translation merge error: {e}", exc_info=True)
     
     # Cleanup on session end
     cleanup_temp_files()
